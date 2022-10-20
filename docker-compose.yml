@@ -1,0 +1,25 @@
+version: "3.8"
+services:
+    inference:
+        container_name: "ocr-inference"
+        build: "."
+        ports:
+            - '3001:3001'
+        volumes:
+            - .:/code
+        command: "uvicorn app:app --host 0.0.0.0 --port 3001"
+        environment:
+            - SAVE_DIR=weights
+            - DATASET_DIR=dataset2
+        ipc: host
+        shm_size: 1024M
+        networks:
+            - tabular_network
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - capabilities: [gpu]
+
+networks:
+    tabular_network:
