@@ -1,4 +1,4 @@
-FROM pytorchlightning/pytorch_lightning:base-cuda-py3.9-torch1.12-cuda11.6.1
+FROM pytorchlightning/pytorch_lightning:base-cuda-py3.9-torch1.10-cuda11.3.1
 ENV TZ=UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
 RUN apt-get update
