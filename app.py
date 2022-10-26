@@ -1,3 +1,4 @@
+from unittest import result
 from fastapi import FastAPI, Form, File, UploadFile, HTTPException
 from fastapi_health import health
 from model.model import EasyOCR
@@ -6,7 +7,7 @@ from os.path import join as pjoin
 import os
 from PIL import Image
 import io
-from utils.utils import pil_to_np
+from utils.utils import pil_to_np, normalizer
 import urllib.request
 
 BASE_URL = os.environ.get('BASE_URL', '/api/v1')
@@ -51,7 +52,7 @@ async def predict(image_url: str):
         # convert to np array
         img = pil_to_np(img)
         os.remove(image_path)
-        return {'result': list(easy_ocr.predict(img))}
+        return {'result': list(map(normalizer, list(easy_ocr.predict(img))))}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
