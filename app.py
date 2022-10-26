@@ -7,7 +7,7 @@ import os
 from PIL import Image
 import io
 from utils.utils import pil_to_np
-
+import urllib.request
 
 BASE_URL = os.environ.get('BASE_URL', '/api/v1')
 app = FastAPI(
@@ -38,13 +38,19 @@ async def get_languages():
 
 
 @app.post(BASE_URL + "/predict")
-async def predict(image: UploadFile = File(...)):
+async def predict(image_url: str):
     try:
+        if not os.path.exists("images/"):
+            os.mkdir("images")
         # convert image to np array
-        contents = await image.read()
+        image_path = f"images/{image_url.split('/')[-1]}"
+        urllib.request.urlretrieve(image_url, image_path)
+        image = open(image_path, mode="rb")
+        contents = image.read()
         img = Image.open(io.BytesIO(contents))
         # convert to np array
         img = pil_to_np(img)
+        os.remove(image_path)
         return {'result': list(easy_ocr.predict(img))}
 
     except Exception as e:
