@@ -38,7 +38,7 @@ async def get_languages():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post(BASE_URL + "/predict")
+@app.post(BASE_URL + "/predict_image_url")
 async def predict(image_url: str):
     try:
         if not os.path.exists("images/"):
@@ -52,6 +52,20 @@ async def predict(image_url: str):
         # convert to np array
         img = pil_to_np(img)
         os.remove(image_path)
+        return {'result': list(map(normalizer, list(easy_ocr.predict(img))))}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(BASE_URL + "/predict_image_file")
+async def predict(image: UploadFile = File(...)):
+    try:
+        # convert image to np array
+        contents = await image.read()
+        img = Image.open(io.BytesIO(contents))
+        # convert to np array
+        img = pil_to_np(img)
         return {'result': list(map(normalizer, list(easy_ocr.predict(img))))}
 
     except Exception as e:
