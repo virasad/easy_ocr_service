@@ -3,6 +3,7 @@ from easyocr import Reader
 from sklearn.model_selection import train_test_split
 import json
 from PIL import Image
+import re
 
 class easyOCR:
     def __init__(self , languages = ['en' , 'ja'] , image_dir = "./business_card_dataset/images" , annotation_path ="./business_card_dataset/annotations/instances_default.json"):
@@ -21,12 +22,34 @@ class easyOCR:
     def extract_text_box(self , image_path , annotations):
         texts = []
         boxes = []
+        img_name = os.path.basename(image_path)
+        img_id = None
+        for img in annotations["images"]:
+            if img_name == img["file_name"]:
+                img_id = img["id"]
+                break
         for annotation in annotations["annotations"]:
-                if annotation.get('filename') == os.path.basename(image_path) and annotation["language"] in self.languages:
-                    boxes.append(annotation["bbox"])
-                    texts.append(annotation["text"])
-                return texts , boxes
-        
+                if annotation["image_id"] == img_id:
+                    bbox = annotation["bbox"]
+                    x0, y0, w, h = bbox
+                    x1, y1 = x0 + w, y0 + h
+                    boxes.append([[x0, y0], [x1, y1]])
+                    text = annotation.get("attributes", {}).get("value")
+                    if text:
+                        texts.append(text)
+        return texts , boxes
+
+    def crop_text_regions(self, image_path, results):
+        img = Image.open(image_path)
+        for res in results:
+            text = res[1]
+            bbox = res[0]
+            conf = res[2]
+            box = (bbox[0][0], bbox[0][1], bbox[2][0], bbox[3][1])
+            cropped_img = img.crop(box)
+            img_name = "".join(c if c.isalnum() else "_" for c in text)
+            cropped_img.save(f"{img_name}.png" , format="PNG")  
+            
     def train(self):
         annotations , image_files = self.get_annotations_and_image_file()
         train_files , test_files = train_test_split(image_files, test_size=0.1 , random_state=42)
@@ -36,6 +59,7 @@ class easyOCR:
                 texts, boxes = self.extract_text_box(image_path, annotations)
                 detail = {'box': boxes}
                 results = self.reader.readtext(image_path , detail=detail)
+                self.crop_text_regions(image_path, results)
 
     def test(self):
         annotations , image_files = self.get_annotations_and_image_file()
@@ -46,19 +70,15 @@ class easyOCR:
                 texts, boxes = self.extract_text_box(image_path, annotations)
                 detail = {'box': boxes}
                 results = self.reader.readtext(image_path , detail=detail)
+                self.crop_text_regions(image_path, results)
                 for res in results:
                     text = res[1]
                     bbox = res[0]
                     conf = res[2]
                     print(f"System output : {text} - Confidence: {conf}")
-                    if all(isinstance(coord, int) for coord in bbox):
-                        bbox = tuple(int(coord) for coord in bbox)
-                        try:
+                    
+                       
 
-                            region = Image.open(image_path).crop(bbox)
-                            region.save(f"{text}.png")
-                        except ValueError:
-                           pass
 
 model = easyOCR()
 model.train()
