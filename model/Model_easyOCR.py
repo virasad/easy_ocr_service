@@ -33,7 +33,6 @@ class pre_train():
         image_path = os.path.join(self.image_dir, self.image_files[idx])
         image = Image.open(image_path).convert('L')
 
-        # Extract text boxes from annotations
         info_of_each_img = []
         img_name = os.path.basename(image_path)
         img_id = None
@@ -56,17 +55,15 @@ class pre_train():
 
 
 
-        # Convert text to tensor
         text_list = [info[1] for info in info_of_each_img]
         text_tensor = self.reader.recognize(image_np, text_list)
 
         bbox_list = []
         for info in info_of_each_img:
             x0, y0, x1, y1 = info[2][0][0], info[2][0][1], info[2][1][0], info[2][1][1]
-            bbox_list.append([y0, x0, y1, x1])  # convert to [y0, x0, y1, x1] format
+            bbox_list.append([y0, x0, y1, x1])  
         bbox_tensor = torch.tensor(bbox_list).float()
 
-        # Convert image ID to tensor
         img_id_list = [info[0] for info in info_of_each_img]
         img_id_tensor = torch.tensor(img_id_list).long()
 
@@ -85,18 +82,15 @@ class BidirectionalLSTM(nn.Module):
                 torch.zeros(2, batch_size, self.hidden_size).to(device))
 
     def forward(self, input):
-        """
-        input : visual feature [batch_size x T x input_size]
-        output : contextual feature [batch_size x T x output_size]
-        """
-        try: # multi gpu needs this
+    
+        try: 
             self.rnn.flatten_parameters()
-        except: # quantization doesn't work with this 
+        except:  
             pass
         batch_size, T, _ = input.size()
         hidden = self.init_hidden(batch_size)
-        recurrent, _ = self.rnn(input)  # batch_size x T x input_size -> batch_size x T x (2*hidden_size)
-        output = self.linear(recurrent)  # batch_size x T x output_size
+        recurrent, _ = self.rnn(input)  
+        output = self.linear(recurrent)  
         return output
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -157,7 +151,7 @@ class Model(nn.Module):
         b, c, h, w = conv.size()
         assert h == 1, "the height of conv must be 1"
         conv = conv.squeeze(2)
-        conv = conv.permute(2, 0, 1)  # [w, b, c]
+        conv = conv.permute(2, 0, 1)  
         output = self.rnn(conv)
         return output.permute(1, 0, 2)
 
