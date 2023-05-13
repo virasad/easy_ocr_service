@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import numpy as np
 import cv2
-
+import traceback
 
 class pre_train():
     def __init__(self ,languages ,  image_dir  , annotation_path):
@@ -30,44 +30,48 @@ class pre_train():
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        image_path = os.path.join(self.image_dir, self.image_files[idx])
-        image = Image.open(image_path).convert('L')
+        try:
+            image_path = os.path.join(self.image_dir, self.image_files[idx])
+            image = Image.open(image_path).convert('L')
 
-        info_of_each_img = []
-        img_name = os.path.basename(image_path)
-        img_id = None
-        for img in self.annotations["images"]:
-            if img_name == img["file_name"]:
-                img_id = img["id"]
-                break
-        for annotation in self.annotations["annotations"]:
-            if annotation["image_id"] == img_id:
-                bbox = annotation["bbox"]
-                x0, y0, w, h = bbox
-                x1, y1 = x0 + w, y0 + h
-                text = annotation.get("attributes", {}).get("value")
-                image_id = annotation["id"]
-                info_of_each_img.append([image_id , text , [[x0, y0], [x1, y1]]])
+            info_of_each_img = []
+            img_name = os.path.basename(image_path)
+            img_id = None
+            for img in self.annotations["images"]:
+                if img_name == img["file_name"]:
+                    img_id = img["id"]
+                    break
+            for annotation in self.annotations["annotations"]:
+                if annotation["image_id"] == img_id:
+                    bbox = annotation["bbox"]
+                    x0, y0, w, h = bbox
+                    x1, y1 = x0 + w, y0 + h
+                    text = annotation.get("attributes", {}).get("value")
+                    image_id = annotation["id"]
+                    info_of_each_img.append([image_id , text , [[x0, y0], [x1, y1]]])
 
-        image = F.resize(image, (100, 32))
-        image_np = np.array(image)
-        image_np = cv2.cvtColor(image_np, cv2.COLOR_GRAY2BGR)
+            image = F.resize(image, (100, 32))
+            image_np = np.array(image)
+            image_np = cv2.cvtColor(image_np, cv2.COLOR_GRAY2BGR)
 
 
 
-        text_list = [info[1] for info in info_of_each_img]
-        text_tensor = self.reader.recognize(image_np, text_list)
+            text_list = [info[1] for info in info_of_each_img]
+            text_tensor = self.reader.recognize(image_np, text_list)
 
-        bbox_list = []
-        for info in info_of_each_img:
-            x0, y0, x1, y1 = info[2][0][0], info[2][0][1], info[2][1][0], info[2][1][1]
-            bbox_list.append([y0, x0, y1, x1])  
-        bbox_tensor = torch.tensor(bbox_list).float()
+            bbox_list = []
+            for info in info_of_each_img:
+                x0, y0, x1, y1 = info[2][0][0], info[2][0][1], info[2][1][0], info[2][1][1]
+                bbox_list.append([y0, x0, y1, x1])  
+            bbox_tensor = torch.tensor(bbox_list).float()
 
-        img_id_list = [info[0] for info in info_of_each_img]
-        img_id_tensor = torch.tensor(img_id_list).long()
+            img_id_list = [info[0] for info in info_of_each_img]
+            img_id_tensor = torch.tensor(img_id_list).long()
 
-        return torch.tensor(image_np).float(), text_tensor, bbox_tensor, img_id_tensor
+            return torch.tensor(image_np).float(), text_tensor, bbox_tensor, img_id_tensor
+        except Exception as e:
+             print(traceback.format_exc())
+             return torch.empty((0,))
 
 class BidirectionalLSTM(nn.Module):
 
