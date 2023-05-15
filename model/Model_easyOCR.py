@@ -1,241 +1,171 @@
-import os
 import json
-from PIL import Image
-from easyocr import Reader
-import torch
-import torch.nn as nn
-import torchvision.transforms.functional as F
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
-import numpy as np
+import os
 import cv2
+from PIL import Image
+import numpy as np
+from sklearn.model_selection import train_test_split
+import torch.nn as nn
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.preprocessing import LabelEncoder
 import traceback
 
-class pre_train():
-    def __init__(self ,languages ,  image_dir  , annotation_path):
-        self.image_dir = image_dir
-        self.annotation_path = annotation_path
-        self.reader = Reader(languages)
 
-        with open(self.annotation_path, 'r', encoding='utf-8') as f:
-            self.annotations = json.load(f)
-        self.image_files = os.listdir(self.image_dir)
+annotation_path ="./business_card_dataset/annotations/instances_default.json"
+image_dir = "./business_card_dataset/images"
+
+with open(annotation_path , 'r' , encoding='utf-8') as f:
+        annotations = json.load(f)
+        image_files = os.listdir(image_dir)
+
+cropped_img = []
+text = []
+
+for i in image_files:
+        if i.endswith('.png'):
+                image_path = os.path.join(image_dir , i)
+                img_name = os.path.basename(image_path)
+                image = Image.open(image_path)
+                if image is None: 
+                    print(f"Error reading image: {image_path}")
+                    continue
+                img_id = None
+                for img in annotations["images"]:
+                    if img_name == img["file_name"]:
+                        img_id = img["id"]
+                        break
+                for annotation in annotations["annotations"]:
+                        if annotation["image_id"] == img_id:
+                            bbox = annotation["bbox"]
+                            x1 = bbox[0]
+                            y1 = bbox[1]
+                            x2 = bbox[0] + bbox[2]
+                            y2 = bbox[1]
+                            x3 = bbox[0] + bbox[2]
+                            y3 = bbox[1] + bbox[3]
+                            x4 = bbox[0]
+                            y4 = bbox[1] + bbox[3]
+                            points = [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+                            crop_img = image.crop((min([p[0] for p in points]), min([p[1] for p in points]), max([p[0] for p in points]), max([p[1] for p in points])))
+
+                            crop_img = cv2.resize(np.array(crop_img), (640, 480))
+                            crop_img_gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+                            crop_img_blur = cv2.medianBlur(crop_img_gray, 5)
+                            
+
+                            crop_img_rgb = np.moveaxis(crop_img_blur, -1, 0)
 
 
-    
-    
-    
-    
-    def __len__(self):
-        return len(self.image_files)
-
-    def __getitem__(self, idx):
-        try:
-            image_path = os.path.join(self.image_dir, self.image_files[idx])
-            image = Image.open(image_path).convert('L')
-
-            info_of_each_img = []
-            img_name = os.path.basename(image_path)
-            img_id = None
-            for img in self.annotations["images"]:
-                if img_name == img["file_name"]:
-                    img_id = img["id"]
-                    break
-            for annotation in self.annotations["annotations"]:
-                if annotation["image_id"] == img_id:
-                    bbox = annotation["bbox"]
-                    x0, y0, w, h = bbox
-                    x1, y1 = x0 + w, y0 + h
-                    text = annotation.get("attributes", {}).get("value")
-                    image_id = annotation["id"]
-                    info_of_each_img.append([image_id , text , [[x0, y0], [x1, y1]]])
-
-            image = F.resize(image, (100, 32))
-            image_np = np.array(image)
-            image_np = cv2.cvtColor(image_np, cv2.COLOR_GRAY2BGR)
 
 
+                            cropped_img.append(crop_img_rgb)
+                            txt = annotation.get("attributes", {}).get("value")
+                            text.append(txt)
+                           
 
-            text_list = [info[1] for info in info_of_each_img]
-            text_tensor = self.reader.recognize(image_np, text_list)
+x_train , x_test, y_train , y_test = train_test_split(cropped_img , text , test_size=0.2 , random_state=42)
 
-            bbox_list = []
-            for info in info_of_each_img:
-                x0, y0, x1, y1 = info[2][0][0], info[2][0][1], info[2][1][0], info[2][1][1]
-                bbox_list.append([y0, x0, y1, x1])  
-            bbox_tensor = torch.tensor(bbox_list).float()
+x_train = torch.tensor(np.array(x_train)).float()
+print(x_train.shape)
+x_test = torch.tensor(np.array(x_test)).float()
+print(x_test.shape)
 
-            img_id_list = [info[0] for info in info_of_each_img]
-            img_id_tensor = torch.tensor(img_id_list).long()
+label_encoder = LabelEncoder()
+y_train = label_encoder.fit_transform(y_train)
+y_train = torch.tensor(y_train, dtype=torch.long)
+print(y_train.shape)
 
-            return torch.tensor(image_np).float(), text_tensor, bbox_tensor, img_id_tensor
-        except Exception as e:
-             print(traceback.format_exc())
-             return torch.empty((0,))
+y_test = label_encoder.fit_transform(y_test)
+y_test = torch.tensor(y_test, dtype=torch.long)
+
+
+train_data = TensorDataset(x_train, y_train)
+test_data = TensorDataset(x_test, y_test)
+
 
 class BidirectionalLSTM(nn.Module):
 
     def __init__(self, input_size, hidden_size, output_size):
         super(BidirectionalLSTM, self).__init__()
-        self.hidden_size = hidden_size
         self.rnn = nn.LSTM(input_size, hidden_size, bidirectional=True, batch_first=True)
         self.linear = nn.Linear(hidden_size * 2, output_size)
 
-    def init_hidden(self, batch_size):
-        return (torch.zeros(2, batch_size, self.hidden_size).to(device), 
-                torch.zeros(2, batch_size, self.hidden_size).to(device))
-
     def forward(self, input):
-    
+       
         try: 
             self.rnn.flatten_parameters()
-        except:  
+        except: 
             pass
-        batch_size, T, _ = input.size()
-        hidden = self.init_hidden(batch_size)
         recurrent, _ = self.rnn(input)  
         output = self.linear(recurrent)  
         return output
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+class VGG_FeatureExtractor(nn.Module):
 
-
-class CRNN(nn.Module):
-
-    def __init__(self, input_channel, num_classes, hidden_size):
-        super(CRNN, self).__init__()
-        self.FeatureExtractor = nn.Sequential(
-            nn.Conv2d(input_channel, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)),
-            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=(2, 1), stride=(2, 1)),
-            nn.Conv2d(512, 512, kernel_size=2, stride=1, padding=(0, 1)),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-        )
-        self.SequenceModeling = nn.Sequential(
-            BidirectionalLSTM(512, hidden_size, hidden_size),
-            BidirectionalLSTM(hidden_size, hidden_size, hidden_size))
-        self.Prediction = nn.Linear(hidden_size, num_classes)
+    def __init__(self, input_channel, output_channel=256):
+        super(VGG_FeatureExtractor, self).__init__()
+        self.output_channel = [int(output_channel / 8), int(output_channel / 4),
+                               int(output_channel / 2), output_channel]
+        self.ConvNet = nn.Sequential(
+            nn.Conv2d(input_channel, self.output_channel[0], 3, 1, 1), nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(self.output_channel[0], self.output_channel[1], 3, 1, 1), nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(self.output_channel[1], self.output_channel[2], 3, 1, 1), nn.ReLU(True),
+            nn.Conv2d(self.output_channel[2], self.output_channel[2], 3, 1, 1), nn.ReLU(True),
+            nn.MaxPool2d((2, 1), (2, 1)),
+            nn.Conv2d(self.output_channel[2], self.output_channel[3], 3, 1, 1, bias=False),
+            nn.BatchNorm2d(self.output_channel[3]), nn.ReLU(True),
+            nn.Conv2d(self.output_channel[3], self.output_channel[3], 3, 1, 1, bias=False),
+            nn.BatchNorm2d(self.output_channel[3]), nn.ReLU(True),
+            nn.MaxPool2d((2, 1), (2, 1)),
+            nn.Conv2d(self.output_channel[3], self.output_channel[3], 2, 1, 0), nn.ReLU(True))
 
     def forward(self, input):
-        visual_feature = self.FeatureExtractor(input)
-        contextual_feature = self.SequenceModeling(visual_feature)
-        prediction = self.Prediction(contextual_feature[:, -1, :])
-        return prediction
-
+        print(input.shape)
+        return self.ConvNet(input)
 
 class Model(nn.Module):
 
     def __init__(self, input_channel, output_channel, hidden_size, num_class):
         super(Model, self).__init__()
-        self.cnn = CRNN(input_channel, output_channel, hidden_size)
-        self.rnn = BidirectionalLSTM(output_channel, hidden_size, num_class)
+        self.FeatureExtraction = VGG_FeatureExtractor(input_channel, output_channel)
+        self.FeatureExtraction_output = output_channel
+        self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d((None, 1))
 
-    def forward(self, input):
-        conv = self.cnn(input)
-        b, c, h, w = conv.size()
-        assert h == 1, "the height of conv must be 1"
-        conv = conv.squeeze(2)
-        conv = conv.permute(2, 0, 1)  
-        output = self.rnn(conv)
-        return output.permute(1, 0, 2)
+        self.SequenceModeling = nn.Sequential(
+            BidirectionalLSTM(self.FeatureExtraction_output, hidden_size, hidden_size),
+            BidirectionalLSTM(hidden_size, hidden_size, hidden_size))
+        self.SequenceModeling_output = hidden_size
 
+        self.Prediction = nn.Linear(self.SequenceModeling_output, num_class)
 
 
+    def forward(self, input, text):
+        print(input.shape)
+        visual_feature = self.FeatureExtraction(input)
+        visual_feature = self.AdaptiveAvgPool(visual_feature.permute(0, 3, 1, 2))
+        visual_feature = visual_feature.squeeze(3)
 
+        contextual_feature = self.SequenceModeling(visual_feature)
 
+        prediction = self.Prediction(contextual_feature.contiguous())
 
-    # def extract_text_box(self , image_path , annotations):
-    #     info_of_each_img = []
-    #     img_name = os.path.basename(image_path)
-    #     img_id = None
-    #     for img in annotations["images"]:
-    #         if img_name == img["file_name"]:
-    #             img_id = img["id"]
-    #             break
-    #     for annotation in annotations["annotations"]:
-    #             if annotation["image_id"] == img_id:
-    #                 bbox = annotation["bbox"]
-    #                 x0, y0, w, h = bbox
-    #                 x1, y1 = x0 + w, y0 + h
-    #                 text = annotation.get("attributes", {}).get("value")
-    #                 image_id = annotation["id"]
-    #                 info_of_each_img.append([image_id , text , [[x0, y0], [x1, y1]]])
-    #     return info_of_each_img
-    # def crop_text_regions(self, image_path, results , image_id):
-    #     img = Image.open(image_path)
-    #     for res in results:
-    #         text = res[1]
-    #         bbox = res[0]
-    #         conf = res[2]
-    #         box = (bbox[0][0], bbox[0][1], bbox[2][0], bbox[3][1])
-    #         cropped_img = img.crop(box)
-    #         img_name = image_id
-    #         cropped_img.save(f"./cropped image/{img_name}.png" , format="PNG")  
-            
-    # def pre_train(self):
-    #     annotations , image_files = self.get_annotations_and_image_file()
-    #     for img in image_files:
-    #         if img.endswith('.png'):
-    #             image_path = os.path.join(self.image_dir , img)
-    #             info = self.extract_text_box(image_path, annotations)
-    #             print(info)
-    #             boxes = []
-    #             image_id = []
-    #             for i in info:
-    #                 boxes.append(i[1])
-    #                 image_id.append(i[0])
-    #             detail = {'box': boxes}
-    #             results = self.reader.readtext(image_path , detail=detail)
-    #             for i in image_id:
-    #               self.crop_text_regions(image_path, results , i)
-                  
- 
+        return prediction
 
-dataset = pre_train(languages=['en', 'ja'], image_dir='./business_card_dataset/images', annotation_path='./business_card_dataset/annotations/instances_default.json')
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
 model = Model(input_channel=3, output_channel=256, hidden_size=256, num_class=128)
 
+batch_size = 32
+train_dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+test_dataloader = DataLoader(test_data, batch_size=batch_size)
 
-for batch in dataloader:
-    images, text, bbox, img_id = batch
-    output = model(images, text)
+for batch in train_dataloader:
+    input, text = batch
+    output = model(input, text)
+
+                                                        
 
 
-# output + error : File "c:/Users/Fateme/Desktop/buisiness card/Model.py", line 222, in <module>
-#     for batch in dataloader:
-#   File "C:\Users\Fateme\AppData\Local\Programs\Python\Python38\lib\site-packages\torch\utils\data\dataloader.py", line 634, in __next__
-#     data = self._next_data()
-#   File "C:\Users\Fateme\AppData\Local\Programs\Python\Python38\lib\site-packages\torch\utils\data\dataloader.py", line 678, in _next_data
-#     data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
-#   File "C:\Users\Fateme\AppData\Local\Programs\Python\Python38\lib\site-packages\torch\utils\data\_utils\fetch.py", line 51, in fetch
-#     data = [self.dataset[idx] for idx in possibly_batched_index]
-#   File "C:\Users\Fateme\AppData\Local\Programs\Python\Python38\lib\site-packages\torch\utils\data\_utils\fetch.py", line 51, in <listcomp>
-#     data = [self.dataset[idx] for idx in possibly_batched_index]
-#   File "c:/Users/Fateme/Desktop/buisiness card/Model.py", line 61, in __getitem__
-#     text_tensor = self.reader.recognize(image_np, text_list)
-#   File "C:\Users\Fateme\AppData\Local\Programs\Python\Python38\lib\site-packages\easyocr\easyocr.py", line 379, in recognize
-#     image_list, max_width = get_image_list(h_list, f_list, img_cv_grey, model_height = imgH)
-#   File "C:\Users\Fateme\AppData\Local\Programs\Python\Python38\lib\site-packages\easyocr\utils.py", line 559, in get_image_list
-#     x_min = max(0,box[0])
-# TypeError: '>' not supported between instances of 'str' and 'int'
+                
+        
