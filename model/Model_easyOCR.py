@@ -53,34 +53,39 @@ for i in image_files:
                             crop_img_blur = cv2.medianBlur(crop_img_gray, 5)
                             
 
-                            crop_img_rgb = np.moveaxis(crop_img_blur, -1, 0)
-
-
+                            crop_img_rgb = np.expand_dims(crop_img_blur, axis=0)
 
 
                             cropped_img.append(crop_img_rgb)
                             txt = annotation.get("attributes", {}).get("value")
                             text.append(txt)
-                           
 
-x_train , x_test, y_train , y_test = train_test_split(cropped_img , text , test_size=0.2 , random_state=42)
+# Convert labels to numerical values
+label_encoder = LabelEncoder()
+encoded_labels = label_encoder.fit_transform(text)
+
+# Define the new range for labels
+new_min_label = 0
+new_max_label = 127
+
+for i in range(len(encoded_labels)):
+    if encoded_labels[i] < new_min_label or encoded_labels[i] > new_max_label:
+        encoded_labels[i] = new_min_label
+
+
+
+x_train , x_test, y_train , y_test = train_test_split(cropped_img , encoded_labels , test_size=0.2 , random_state=42)
 
 x_train = torch.tensor(np.array(x_train)).float()
-print(x_train.shape)
 x_test = torch.tensor(np.array(x_test)).float()
-print(x_test.shape)
 
-label_encoder = LabelEncoder()
-y_train = label_encoder.fit_transform(y_train)
-y_train = torch.tensor(y_train, dtype=torch.long)
-print(y_train.shape)
-
-y_test = label_encoder.fit_transform(y_test)
-y_test = torch.tensor(y_test, dtype=torch.long)
+y_train_encoded = torch.tensor(y_train)
+y_test_encoded = torch.tensor(y_test)
 
 
-train_data = TensorDataset(x_train, y_train)
-test_data = TensorDataset(x_test, y_test)
+train_data = TensorDataset(x_train, y_train_encoded)
+test_data = TensorDataset(x_test, y_test_encoded)
+
 
 
 class BidirectionalLSTM(nn.Module):
@@ -122,7 +127,6 @@ class VGG_FeatureExtractor(nn.Module):
             nn.Conv2d(self.output_channel[3], self.output_channel[3], 2, 1, 0), nn.ReLU(True))
 
     def forward(self, input):
-        print(input.shape)
         return self.ConvNet(input)
 
 class Model(nn.Module):
@@ -141,29 +145,61 @@ class Model(nn.Module):
         self.Prediction = nn.Linear(self.SequenceModeling_output, num_class)
 
 
-    def forward(self, input, text):
-        print(input.shape)
+    def forward(self, input):
         visual_feature = self.FeatureExtraction(input)
         visual_feature = self.AdaptiveAvgPool(visual_feature.permute(0, 3, 1, 2))
         visual_feature = visual_feature.squeeze(3)
 
         contextual_feature = self.SequenceModeling(visual_feature)
+        contextual_feature = torch.mean(contextual_feature, dim=1)
 
         prediction = self.Prediction(contextual_feature.contiguous())
 
         return prediction
 
 
-model = Model(input_channel=3, output_channel=256, hidden_size=256, num_class=128)
+model = Model(input_channel=1, output_channel=256, hidden_size=256, num_class=128)
+
 
 batch_size = 32
 train_dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_data, batch_size=batch_size)
 
-for batch in train_dataloader:
-    input, text = batch
-    output = model(input, text)
 
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+# Training loop
+num_epochs = 10
+best_accuracy = 0.0
+best_model_weights = None
+for epoch in range(num_epochs):
+    model.train()
+    for batch in train_dataloader:
+        inputs, labels = batch
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+    # Evaluation
+    model.eval()
+    with torch.no_grad():
+        total_correct = 0
+        total_samples = 0
+        for batch in test_dataloader:
+            inputs, labels = batch
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs, 1)
+            total_samples += labels.size(0)
+            total_correct += (predicted == labels).sum().item()
+
+        accuracy = total_correct / total_samples
+        print(f"Epoch {epoch+1}: Accuracy = {accuracy}")
+
+
+torch.save(best_model_weights, 'model_weights.pth')
                                                         
 
 
