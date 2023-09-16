@@ -4,15 +4,15 @@ import pprint
 
 class EasyOCR:
     def __init__(self):
-        self.reader = easyocr.Reader(['en'], gpu=False)
-        self.languages = ['en']
+        self.reader = easyocr.Reader(['en','ja'], gpu=True)
+        self.languages = ['en','ja']
 
     def set_language(self, languages):
         self.languages = languages
         self.reader = easyocr.Reader(languages)
 
     def predict(self, image):
-        results = list(self.reader.readtext(image))
+        results = list(self.reader.readtext(image, width_ths=0.7))
         new_res = []
         for res in results:
             box = res[0]
